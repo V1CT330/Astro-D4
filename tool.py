@@ -1,5 +1,6 @@
-"""Tools the agent can call: code/files, scraping, and browser interaction."""
+"""Tools the agent can call: code/files, scraping, GitHub search, and browser."""
 import ipaddress
+import os
 import socket
 import subprocess
 import urllib.robotparser
@@ -87,6 +88,36 @@ def scrape_page(url: str, selector: str = "") -> str:
     return _clip(f"TEXT:\n{text}\n\nLINKS:\n" + "\n".join(links))
 
 
+# ---------- GitHub search ----------
+def github_search_repos(query: str, language: str = "", sort: str = "stars",
+                        max_results: int = 5) -> str:
+    """Search public GitHub repositories. Set GITHUB_TOKEN for higher rate limits."""
+    q = f"{query} language:{language}" if language else query
+    params = {"q": q, "per_page": min(max(int(max_results), 1), 10)}
+    if sort in ("stars", "forks", "updated"):
+        params.update(sort=sort, order="desc")
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": UA}
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    resp = requests.get("https://api.github.com/search/repositories",
+                        params=params, headers=headers, timeout=20)
+    if resp.status_code in (403, 429):
+        return "GitHub rate limit reached. Wait a minute or set GITHUB_TOKEN."
+    resp.raise_for_status()
+    items = resp.json().get("items", [])
+    if not items:
+        return "No repositories found."
+    lines = []
+    for r in items:
+        lines.append(
+            f"{r['full_name']} | stars: {r['stargazers_count']} | "
+            f"language: {r.get('language') or 'n/a'} | updated: {r['pushed_at'][:10]}\n"
+            f"  {r.get('description') or '(no description)'}\n  {r['html_url']}"
+        )
+    return _clip("\n".join(lines))
+
+
 # ---------- browser (Playwright, started on first use) ----------
 _pw = _browser = _page = None
 
@@ -151,6 +182,9 @@ TOOLS = [
      _schema({"command": _S}, ["command"])),
     ("scrape_page", scrape_page, "Fetch a static page; returns text and links. Optional CSS selector.",
      _schema({"url": _S, "selector": _S}, ["url"])),
+    ("github_search_repos", github_search_repos,
+     "Search public GitHub repositories by keyword. Optional language, sort (stars, forks, updated, best-match) and max_results (1-10).",
+     _schema({"query": _S, "language": _S, "sort": _S, "max_results": {"type": "integer"}}, ["query"])),
     ("browser_goto", browser_goto, "Open a URL in a real browser (for JavaScript-heavy sites).",
      _schema({"url": _S}, ["url"])),
     ("browser_text", browser_text, "Get visible text of the current browser page (optional selector).",
@@ -166,4 +200,3 @@ TOOLS = [
 REGISTRY = {name: fn for name, fn, _, _ in TOOLS}
 SCHEMAS = [{"name": n, "description": d, "input_schema": s} for n, _, d, s in TOOLS]
 RISKY = {"run_command", "browser_click", "browser_type"}
-      
