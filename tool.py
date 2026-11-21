@@ -2,7 +2,6 @@
 import ipaddress
 import os
 import socket
-import subprocess
 import urllib.robotparser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
