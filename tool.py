@@ -33,8 +33,8 @@ def _check_url(url: str) -> None:
         raise ValueError("Only http(s) URLs are allowed.")
     for info in socket.getaddrinfo(parsed.hostname, None):
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local:
-            raise ValueError("Local/private addresses are blocked.")
+        if not ip.is_global:
+            raise ValueError("Non-public, reserved, or local addresses are blocked.")
 
 
 # ---------- code / files ----------
@@ -56,12 +56,13 @@ def write_file(path: str, content: str) -> str:
 
 
 def run_command(command: str) -> str:
-    try:
-        r = subprocess.run(command, shell=True, cwd=WORKSPACE, capture_output=True,
-                           text=True, timeout=60)
-    except subprocess.TimeoutExpired:
-        return "Command timed out after 60s."
-    return _clip(f"exit code {r.returncode}\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}")
+    # Arbitrary shell execution is intentionally unavailable in this agent.
+    # A workspace cwd is not a security sandbox: shell commands can access the
+    # host filesystem, credentials, network, and other processes.
+    return (
+        "Shell execution is disabled for security. Use the workspace file tools "
+        "for file operations; run code only in a separately isolated sandbox."
+    )
 
 
 # ---------- scraping ----------
