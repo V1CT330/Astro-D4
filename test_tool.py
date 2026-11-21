@@ -1,7 +1,7 @@
 """Basic tests for tools.py. Run with: pytest"""
 import pytest
 
-import tools
+import tool as tools
 
 
 @pytest.fixture(autouse=True)
