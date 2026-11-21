@@ -66,17 +66,38 @@ def run_command(command: str) -> str:
 
 
 # ---------- scraping ----------
+def _safe_get(url: str, **kwargs):
+    """GET with redirect-by-redirect URL validation; never follow redirects blindly."""
+    current = url
+    headers = kwargs.pop("headers", {})
+    for _ in range(6):
+        _check_url(current)
+        response = requests.get(
+            current, headers=headers, timeout=20, allow_redirects=False, **kwargs
+        )
+        if response.status_code not in (301, 302, 303, 307, 308):
+            return response
+        location = response.headers.get("Location")
+        if not location:
+            return response
+        current = urljoin(current, location)
+    raise ValueError("Too many redirects; request blocked.")
+
+
 def scrape_page(url: str, selector: str = "") -> str:
     _check_url(url)
     robots = urllib.robotparser.RobotFileParser()
     try:
-        robots.set_url(urljoin(url, "/robots.txt"))
-        robots.read()
+        robots_url = urljoin(url, "/robots.txt")
+        robots_response = _safe_get(robots_url, headers={"User-Agent": UA})
+        if robots_response.ok:
+            robots.set_url(robots_url)
+            robots.parse(robots_response.text.splitlines())
         if not robots.can_fetch(UA, url):
             return "Blocked by robots.txt. Not fetching."
     except Exception:
-        pass  # robots.txt unreachable; continue politely
-    resp = requests.get(url, headers={"User-Agent": UA}, timeout=20)
+        pass  # robots.txt unavailable; URL checks still apply to the page request
+    resp = _safe_get(url, headers={"User-Agent": UA})
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
@@ -136,6 +157,19 @@ def _get_page():
 def browser_goto(url: str) -> str:
     _check_url(url)
     page = _get_page()
+
+    # Playwright can follow redirects and load subresources. Validate every
+    # requested URL, not only the initial navigation target.
+    if not getattr(page, "_astro_url_guard_installed", False):
+        def guard_request(route):
+            try:
+                _check_url(route.request.url)
+                route.continue_()
+            except Exception:
+                route.abort()
+        page.route("**/*", guard_request)
+        page._astro_url_guard_installed = True
+
     page.goto(url, timeout=30000)
     return f"Opened {page.url} — title: {page.title()}"
 
@@ -179,8 +213,6 @@ TOOLS = [
     ("read_file", read_file, "Read a text file from the workspace.", _schema({"path": _S}, ["path"])),
     ("write_file", write_file, "Create or overwrite a file in the workspace.",
      _schema({"path": _S, "content": _S}, ["path", "content"])),
-    ("run_command", run_command, "Run a shell command inside the workspace (60s limit).",
-     _schema({"command": _S}, ["command"])),
     ("scrape_page", scrape_page, "Fetch a static page; returns text and links. Optional CSS selector.",
      _schema({"url": _S, "selector": _S}, ["url"])),
     ("github_search_repos", github_search_repos,
@@ -200,4 +232,4 @@ TOOLS = [
 
 REGISTRY = {name: fn for name, fn, _, _ in TOOLS}
 SCHEMAS = [{"name": n, "description": d, "input_schema": s} for n, _, d, s in TOOLS]
-RISKY = {"run_command", "browser_click", "browser_type"}
+RISKY = {"browser_click", "browser_type"}
