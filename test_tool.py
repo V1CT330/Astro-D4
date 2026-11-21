@@ -1,7 +1,7 @@
 """Basic tests for tools.py. Run with: pytest"""
 import pytest
 
-import tools
+import tool as tools
 
 
 @pytest.fixture(autouse=True)
@@ -24,9 +24,29 @@ def test_path_escape_is_blocked():
         tools.read_file("../secret.txt")
 
 
-def test_run_command_returns_output():
-    out = tools.run_command("echo agent")
-    assert "exit code 0" in out and "agent" in out
+def test_shell_execution_is_not_exposed_or_available():
+    assert "run_command" not in tools.REGISTRY
+    assert "disabled" in tools.run_command("echo agent").lower()
+
+
+def test_redirect_to_private_address_is_blocked(monkeypatch):
+    class Redirect:
+        status_code = 302
+        headers = {"Location": "http://127.0.0.1:8000/admin"}
+
+    checked = []
+
+    def check(url):
+        checked.append(url)
+        if "127.0.0.1" in url:
+            raise ValueError("Non-public address blocked")
+
+    monkeypatch.setattr(tools, "_check_url", check)
+    monkeypatch.setattr(tools.requests, "get", lambda *a, **k: Redirect())
+
+    with pytest.raises(ValueError):
+        tools._safe_get("https://public.example/")
+    assert checked == ["https://public.example/", "http://127.0.0.1:8000/admin"]
 
 
 def test_non_http_url_is_blocked():
